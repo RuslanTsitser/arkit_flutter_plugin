@@ -67,6 +67,19 @@ extension FlutterArkitView {
       break
     }
     configuration?.worldAlignment = parseWorldAlignment(arguments)
+      
+    if #available(iOS 14.0, *) {
+        let isAvailable = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
+        if isAvailable {
+            if let config = configuration as? ARBodyTrackingConfiguration {
+                config.frameSemantics.insert(.bodyDetection)
+                
+            } else if let config = configuration as? ARWorldTrackingConfiguration {
+                config.frameSemantics.insert(.personSegmentationWithDepth)
+            }
+        } 
+    }
+      
     return configuration
   }
   
