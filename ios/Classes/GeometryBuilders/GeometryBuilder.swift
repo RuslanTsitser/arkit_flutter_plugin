@@ -129,45 +129,51 @@ private func parseColorBufferWriteMask(_ mode: Int?) -> SCNColorMask {
 }
 
 private func parsePropertyContents(_ dict: Any?) -> Any? {
-  guard let dict = dict as? [String: Any] else {
-    return nil
-  }
-  
-  if let imageName = dict["image"] as? String {
-    return getImageByName(imageName)
-  }
-  if let color = dict["color"] as? Int {
-    return UIColor(rgb: UInt(color))
-  }
-  if let value = dict["value"] as? Double {
-    return value
-  }
-  if let width = dict["width"] as? Int,
-     let height = dict["height"] as? Int,
-     let autoplay = dict["autoplay"] as? Bool,
-     let id = dict["id"] as? String
-  {
-    var videoNode: SKVideoNode
-    if let videoFilename = dict["filename"] as? String {
-      videoNode = SKVideoNode(fileNamed: videoFilename)
-    } else if let url = dict["url"] as? String,
-              let videoUrl = URL(string: url)
+    guard let dict = dict as? [String: Any] else {
+        return nil
+    }
+    
+    if let imageName = dict["image"] as? String {
+        return getImageByName(imageName)
+    }
+    if let color = dict["color"] as? Int {
+        return UIColor(rgb: UInt(color))
+    }
+    if let value = dict["value"] as? Double {
+        return value
+    }
+    if let width = dict["width"] as? Int,
+       let height = dict["height"] as? Int,
+       let autoplay = dict["autoplay"] as? Bool,
+       let id = dict["id"] as? String
     {
-      videoNode = SKVideoNode(url: videoUrl)
-    } else {
-      return nil
+        var videoNode: SKVideoNode
+
+        if let videoFilename = dict["filename"] as? String {
+            videoNode = SKVideoNode(fileNamed: videoFilename)
+        
+        } else if let url = dict["url"] as? String,
+                  let videoUrl = URL(string: url) {
+            videoNode = SKVideoNode(url: videoUrl)
+        
+        } else if let filePath = dict["filePath"] as? String {
+            let videoFileURL = URL(fileURLWithPath: filePath)
+            videoNode = SKVideoNode(url: videoFileURL)
+        } else {
+            return nil
+        }
+
+        VideoArkitPlugin.nodes[id] = videoNode
+        if autoplay {
+            videoNode.play()
+        }
+        
+        let skScene = SKScene(size: CGSize(width: width, height: height))
+        skScene.addChild(videoNode)
+        
+        videoNode.position = CGPoint(x: skScene.size.width / 2, y: skScene.size.height / 2)
+        videoNode.size = skScene.size
+        return skScene
     }
-    VideoArkitPlugin.nodes[id] = videoNode
-    if autoplay {
-      videoNode.play()
-    }
-    
-    let skScene = SKScene(size: CGSize(width: width, height: height))
-    skScene.addChild(videoNode)
-    
-    videoNode.position = CGPoint(x: skScene.size.width / 2, y: skScene.size.height / 2)
-    videoNode.size = skScene.size
-    return skScene
-  }
-  return nil
+    return nil
 }

@@ -1,4 +1,3 @@
-
 import 'package:arkit_plugin/src/utils/json_converters.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -31,6 +30,7 @@ abstract class ARKitMaterialProperty {
     String? filename,
     String? url,
     bool? autoplay = true,
+    String? filePath,
   }) =>
       ARKitMaterialVideo(
         filename: filename,
@@ -38,6 +38,7 @@ abstract class ARKitMaterialProperty {
         width: width,
         height: height,
         autoplay: autoplay ?? true,
+        filePath: filePath,
       );
 
   final String type;
@@ -68,8 +69,7 @@ class ARKitMaterialColor extends ARKitMaterialProperty {
   @ColorConverter()
   final Color color;
 
-  static ARKitMaterialColor fromJson(Map<String, dynamic> json) =>
-      _$ARKitMaterialColorFromJson(json);
+  static ARKitMaterialColor fromJson(Map<String, dynamic> json) => _$ARKitMaterialColorFromJson(json);
 
   @override
   Map<String, dynamic> toJson() => _$ARKitMaterialColorToJson(this);
@@ -86,8 +86,7 @@ class ARKitMaterialImage extends ARKitMaterialProperty {
 
   final String image;
 
-  static ARKitMaterialImage fromJson(Map<String, dynamic> json) =>
-      _$ARKitMaterialImageFromJson(json);
+  static ARKitMaterialImage fromJson(Map<String, dynamic> json) => _$ARKitMaterialImageFromJson(json);
 
   @override
   Map<String, dynamic> toJson() => _$ARKitMaterialImageToJson(this);
@@ -100,8 +99,7 @@ class ARKitMaterialValue extends ARKitMaterialProperty {
 
   final double value;
 
-  static ARKitMaterialValue fromJson(Map<String, dynamic> json) =>
-      _$ARKitMaterialValueFromJson(json);
+  static ARKitMaterialValue fromJson(Map<String, dynamic> json) => _$ARKitMaterialValueFromJson(json);
 
   @override
   Map<String, dynamic> toJson() => _$ARKitMaterialValueToJson(this);
@@ -117,11 +115,13 @@ class ARKitMaterialVideo extends ARKitMaterialProperty {
     this.autoplay = true,
     this.filename,
     this.url,
+    this.filePath,
   })  : id = UniqueKey().toString(),
         super._('video');
 
   final String? filename;
   final String? url;
+  final String? filePath;
   final int width;
   final int height;
   final bool autoplay;
@@ -140,10 +140,8 @@ class ARKitMaterialVideo extends ARKitMaterialProperty {
   /// Pauses video playback.
   Future<void> pause() => _channel.invokeMethod<void>('pause', {'id': id});
 
-  static ARKitMaterialVideo fromJson(Map<String, dynamic> json) =>
-      _$ARKitMaterialVideoFromJson(json);
+  static ARKitMaterialVideo fromJson(Map<String, dynamic> json) => _$ARKitMaterialVideoFromJson(json);
 
   @override
-  Map<String, dynamic> toJson() =>
-      _$ARKitMaterialVideoToJson(this)..addAll({'id': id});
+  Map<String, dynamic> toJson() => _$ARKitMaterialVideoToJson(this)..addAll({'id': id});
 }
