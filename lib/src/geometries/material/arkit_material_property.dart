@@ -140,6 +140,10 @@ class ARKitMaterialVideo extends ARKitMaterialProperty {
   /// Pauses video playback.
   Future<void> pause() => _channel.invokeMethod<void>('pause', {'id': id});
 
+  /// Seek video to a specific time.
+  Future<void> seekTo(Duration duration) =>
+      _channel.invokeMethod<void>('seek', {'id': id, 'seconds': duration.inSeconds});
+
   static ARKitMaterialVideo fromJson(Map<String, dynamic> json) => _$ARKitMaterialVideoFromJson(json);
 
   @override
