@@ -162,6 +162,7 @@ private func parsePropertyContents(_ dict: Any?) -> Any? {
             let videoFileURL = URL(fileURLWithPath: filePath)
             videoPlayer = AVPlayer(url: videoFileURL)
             videoNode = SKVideoNode(avPlayer: videoPlayer!)
+            videoNode.zRotation = .pi
         } else {
             return nil
         }
