@@ -34,6 +34,8 @@ extension FlutterArkitView: ARSCNViewDelegate {
     }
 
     func sessionWasInterrupted(_: ARSession) {
+        cancelCameraVideoRecording()
+        disableTorchForCleanup()
         sendToFlutter("onSessionWasInterrupted", arguments: nil)
     }
 
@@ -60,6 +62,9 @@ extension FlutterArkitView: ARSCNViewDelegate {
     }
 
     func renderer(_: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+        if let frame = sceneView.session.currentFrame {
+            appendCameraFrame(frame)
+        }
         let params = ["time": NSNumber(floatLiteral: time)]
         sendToFlutter("updateAtTime", arguments: params)
     }
