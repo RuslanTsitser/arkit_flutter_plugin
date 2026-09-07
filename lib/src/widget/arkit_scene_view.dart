@@ -264,6 +264,7 @@ class ARKitController {
 
   late MethodChannel _channel;
   bool _isDisposed = false;
+  Future<void>? _disposeFuture;
 
   /// This is called when a session fails.
   /// On failure the session will be paused.
@@ -322,12 +323,22 @@ class ARKitController {
   static const _stateConverter = ARTrackingStateConverter();
   static const _stateReasonConverter = ARTrackingStateReasonConverter();
 
-  void dispose() {
-    if (_isDisposed) {
-      return;
-    }
+  /// Completes after the native AR session has been paused and cleaned up.
+  /// Concurrent calls share the same operation; a failed call can be retried.
+  Future<void> dispose() {
+    return _disposeFuture ??= _disposeNativeView();
+  }
+
+  Future<void> _disposeNativeView() async {
     _isDisposed = true;
-    _channel.invokeMethod<void>('dispose');
+    try {
+      await _channel.invokeMethod<void>('dispose');
+      _channel.setMethodCallHandler(null);
+    } catch (_) {
+      _isDisposed = false;
+      _disposeFuture = null;
+      rethrow;
+    }
   }
 
   void _ensureCameraIsAvailable() {
