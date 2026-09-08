@@ -51,14 +51,20 @@ extension FlutterArkitView: ARSCNViewDelegate {
         if node.name == nil {
             node.name = NSUUID().uuidString
         }
-        if anchor is ARImageAnchor {
+        if let imageAnchor = anchor as? ARImageAnchor {
             heldImageAnchorTransforms[anchor.identifier] = node.simdTransform
+            if let imageName = imageAnchor.referenceImage.name {
+                reclaimOrphanedImageAnchorChildren(onto: node, imageName: imageName)
+            }
         }
         let params = prepareParamsForAnchorEvent(node, anchor)
         sendToFlutter("didAddNodeForAnchor", arguments: params)
     }
 
     func renderer(_: SCNSceneRenderer, didUpdate node: SCNNode, for anchor: ARAnchor) {
+        if let imageAnchor = anchor as? ARImageAnchor, !imageAnchor.isTracked {
+            node.isHidden = false
+        }
         stabilizeImageAnchorNode(node, for: anchor)
         let params = prepareParamsForAnchorEvent(node, anchor)
         sendToFlutter("didUpdateNodeForAnchor", arguments: params)
@@ -66,6 +72,11 @@ extension FlutterArkitView: ARSCNViewDelegate {
 
     func renderer(_: SCNSceneRenderer, didRemove node: SCNNode, for anchor: ARAnchor) {
         heldImageAnchorTransforms.removeValue(forKey: anchor.identifier)
+        if let imageAnchor = anchor as? ARImageAnchor,
+           let imageName = imageAnchor.referenceImage.name
+        {
+            orphanImageAnchorChildren(node, imageName: imageName)
+        }
         let params = prepareParamsForAnchorEvent(node, anchor)
         sendToFlutter("didRemoveNodeForAnchor", arguments: params)
     }
@@ -112,5 +123,46 @@ extension FlutterArkitView: ARSCNViewDelegate {
         }
 
         heldImageAnchorTransforms[anchor.identifier] = proposed
+    }
+
+    fileprivate func orphanImageAnchorChildren(_ node: SCNNode, imageName: String) {
+        var names = orphanedImageAnchorNodeNames[imageName] ?? []
+        for child in node.childNodes {
+            let world = child.simdWorldTransform
+            child.removeFromParentNode()
+            sceneView.scene.rootNode.addChildNode(child)
+            child.simdWorldTransform = world
+            if let name = child.name, !names.contains(name) {
+                names.append(name)
+            }
+        }
+        if !names.isEmpty {
+            orphanedImageAnchorNodeNames[imageName] = names
+        }
+    }
+
+    fileprivate func reclaimOrphanedImageAnchorChildren(
+        onto parent: SCNNode,
+        imageName: String
+    ) {
+        guard let names = orphanedImageAnchorNodeNames[imageName] else {
+            return
+        }
+        for name in names {
+            guard let child = sceneView.scene.rootNode.childNode(
+                withName: name,
+                recursively: true
+            ) else {
+                continue
+            }
+            if child.parent === parent {
+                continue
+            }
+            let world = child.simdWorldTransform
+            child.removeFromParentNode()
+            parent.addChildNode(child)
+            child.simdWorldTransform = world
+        }
+        orphanedImageAnchorNodeNames.removeValue(forKey: imageName)
     }
 }

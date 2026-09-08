@@ -11,6 +11,7 @@ class FlutterArkitView: NSObject, FlutterPlatformView {
     var forceTapOnCenter: Bool = false
     var configuration: ARConfiguration? = nil
     var heldImageAnchorTransforms: [UUID: simd_float4x4] = [:]
+    var orphanedImageAnchorNodeNames: [String: [String]] = [:]
 
     let cameraRecordingQueue = DispatchQueue(label: "arkit.cameraRecording")
     var cameraAssetWriter: AVAssetWriter?
@@ -180,6 +181,7 @@ class FlutterArkitView: NSObject, FlutterPlatformView {
         cancelCameraVideoRecording()
         disableTorchForCleanup()
         heldImageAnchorTransforms.removeAll()
+        orphanedImageAnchorNodeNames.removeAll()
         sceneView.session.pause()
         channel.setMethodCallHandler(nil)
         result(nil)

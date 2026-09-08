@@ -18,6 +18,7 @@ extension FlutterArkitView {
 
         sceneView.debugOptions = parseDebugOptions(arguments)
         heldImageAnchorTransforms.removeAll()
+        orphanedImageAnchorNodeNames.removeAll()
         configuration = parseConfiguration(arguments)
         if configuration != nil {
             sceneView.session.run(configuration!)
