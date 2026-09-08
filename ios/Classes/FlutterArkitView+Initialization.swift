@@ -17,6 +17,7 @@ extension FlutterArkitView {
         initalizeGesutreRecognizers(arguments)
 
         sceneView.debugOptions = parseDebugOptions(arguments)
+        heldImageAnchorTransforms.removeAll()
         configuration = parseConfiguration(arguments)
         if configuration != nil {
             sceneView.session.run(configuration!)
