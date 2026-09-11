@@ -1,4 +1,8 @@
 import ARKit
+import AVFoundation
+import CoreImage
+import ImageIO
+import UIKit
 
 extension FlutterArkitView {
     func onAddNode(_ arguments: [String: Any]) {
@@ -345,5 +349,524 @@ extension FlutterArkitView {
         } else {
             result(nil)
         }
+    }
+
+    func onTakePicture(_ result: @escaping FlutterResult) {
+        guard let frame = sceneView.session.currentFrame else {
+            cameraError(result, "No camera frame is available to capture.")
+            return
+        }
+        let orientation = currentCameraInterfaceOrientation()
+        let viewportSize = sceneView.bounds.size
+        guard viewportSize.width > 0, viewportSize.height > 0 else {
+            cameraError(result, "The camera preview has no visible viewport to capture.")
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let cropRect = self.cameraImageCropRect(
+                for: frame,
+                orientation: orientation,
+                viewportSize: viewportSize,
+                requiresEvenDimensions: false
+            ),
+                  let image = self.cameraPreviewImage(
+                    from: frame.capturedImage,
+                    orientation: self.cameraImageOrientation(for: orientation),
+                    cropRect: cropRect
+                  ),
+                  let cgImage = self.cameraImageContext.createCGImage(image, from: image.extent),
+                  let data = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.95)
+            else {
+                DispatchQueue.main.async {
+                    self.cameraError(result, "The camera frame could not be encoded as JPEG.")
+                }
+                return
+            }
+
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("jpg")
+            do {
+                try data.write(to: outputURL, options: .atomic)
+                DispatchQueue.main.async {
+                    result(outputURL.path)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.cameraError(result, "The camera photo could not be written: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func onStartVideoRecording(_ result: @escaping FlutterResult) {
+        guard let frame = sceneView.session.currentFrame else {
+            cameraError(result, "No camera frame is available to start recording.")
+            return
+        }
+        let orientation = currentCameraInterfaceOrientation()
+        let viewportSize = sceneView.bounds.size
+        guard viewportSize.width > 0, viewportSize.height > 0 else {
+            cameraError(result, "The camera preview has no visible viewport to record.")
+            return
+        }
+        let imageOrientation = cameraImageOrientation(for: orientation)
+        guard let cropRect = cameraImageCropRect(
+            for: frame,
+            orientation: orientation,
+            viewportSize: viewportSize,
+            requiresEvenDimensions: true
+        ),
+              let previewImage = cameraPreviewImage(
+                from: frame.capturedImage,
+                orientation: imageOrientation,
+                cropRect: cropRect
+              )
+        else {
+            cameraError(result, "The visible camera preview could not be prepared for recording.")
+            return
+        }
+        let outputSize = previewImage.extent.size
+        guard outputSize.width >= 2,
+              outputSize.height >= 2,
+              outputSize.width.rounded(.towardZero) == outputSize.width,
+              outputSize.height.rounded(.towardZero) == outputSize.height
+        else {
+            cameraError(result, "The visible camera preview could not be prepared for recording.")
+            return
+        }
+        let width = Int(outputSize.width)
+        let height = Int(outputSize.height)
+
+        cameraRecordingQueue.async { [weak self] in
+            guard let self else { return }
+            guard cameraAssetWriter == nil, !cameraRecordingIsFinishing else {
+                DispatchQueue.main.async {
+                    self.cameraError(result, "Video recording is already active.")
+                }
+                return
+            }
+
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+            do {
+                let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+                let videoInput = AVAssetWriterInput(
+                    mediaType: .video,
+                    outputSettings: [
+                        AVVideoCodecKey: AVVideoCodecType.h264,
+                        AVVideoWidthKey: width,
+                        AVVideoHeightKey: height,
+                    ]
+                )
+                videoInput.expectsMediaDataInRealTime = true
+                guard writer.canAdd(videoInput) else {
+                    throw NSError(
+                        domain: "arkit.camera",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "The video writer cannot accept camera frames."]
+                    )
+                }
+                writer.add(videoInput)
+                let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+                    assetWriterInput: videoInput,
+                    sourcePixelBufferAttributes: [
+                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                        kCVPixelBufferWidthKey as String: width,
+                        kCVPixelBufferHeightKey as String: height,
+                        kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+                    ]
+                )
+                guard writer.startWriting() else {
+                    throw writer.error ?? NSError(
+                        domain: "arkit.camera",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "The video writer could not start."]
+                    )
+                }
+
+                cameraAssetWriter = writer
+                cameraVideoInput = videoInput
+                cameraPixelBufferAdaptor = adaptor
+                cameraRecordingURL = outputURL
+                cameraRecordingStartTimestamp = nil
+                cameraRecordingLastTimestamp = nil
+                cameraRecordingImageOrientation = imageOrientation
+                cameraRecordingCropRect = cropRect
+                cameraRecordingOutputSize = outputSize
+                cameraRecordingIsFinishing = false
+                cameraRecordingFailureMessage = nil
+                DispatchQueue.main.async {
+                    result(nil)
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: outputURL)
+                DispatchQueue.main.async {
+                    self.cameraError(result, "Video recording could not start: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func onStopVideoRecording(_ result: @escaping FlutterResult) {
+        cameraRecordingQueue.async { [weak self] in
+            guard let self else { return }
+            guard let writer = cameraAssetWriter,
+                  let videoInput = cameraVideoInput,
+                  let outputURL = cameraRecordingURL
+            else {
+                let message = cameraRecordingFailureMessage ?? "No video recording is active."
+                cameraRecordingFailureMessage = nil
+                DispatchQueue.main.async {
+                    self.cameraError(result, message)
+                }
+                return
+            }
+            guard !cameraRecordingIsFinishing else {
+                DispatchQueue.main.async {
+                    self.cameraError(result, "Video recording is already stopping.")
+                }
+                return
+            }
+            guard cameraRecordingStartTimestamp != nil else {
+                writer.cancelWriting()
+                resetCameraRecordingState(deleteOutput: true)
+                DispatchQueue.main.async {
+                    self.cameraError(result, "Video recording did not receive any camera frames.")
+                }
+                return
+            }
+
+            cameraRecordingIsFinishing = true
+            videoInput.markAsFinished()
+            writer.finishWriting {
+                self.cameraRecordingQueue.async {
+                    let completed = writer.status == .completed
+                    let message = writer.error?.localizedDescription ?? "The video writer could not finish the recording."
+                    self.resetCameraRecordingState(deleteOutput: !completed)
+                    DispatchQueue.main.async {
+                        if completed {
+                            result(outputURL.path)
+                        } else {
+                            self.cameraError(result, message)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func onCancelVideoRecording(_ result: @escaping FlutterResult) {
+        cameraRecordingQueue.async { [weak self] in
+            guard let self else { return }
+            cameraAssetWriter?.cancelWriting()
+            resetCameraRecordingState(deleteOutput: true)
+            cameraRecordingFailureMessage = nil
+            DispatchQueue.main.async {
+                result(nil)
+            }
+        }
+    }
+
+    func onIsTorchAvailable(_ result: FlutterResult) {
+        guard let device = torchCaptureDevice() else {
+            debugPrint("ARKit torch unavailable: no capture device with a torch")
+            result(false)
+            return
+        }
+        let available = device.hasTorch && device.isTorchModeSupported(.on)
+        debugPrint(
+            "ARKit torch capability: type=\(device.deviceType.rawValue), " +
+                "hasTorch=\(device.hasTorch), available=\(device.isTorchAvailable), " +
+                "supportsOn=\(device.isTorchModeSupported(.on))"
+        )
+        result(available)
+    }
+
+    func onSetTorchEnabled(_ arguments: [String: Any]?, _ result: FlutterResult) {
+        guard let enabled = arguments?["enabled"] as? Bool else {
+            cameraError(result, "A torch enabled value is required.")
+            return
+        }
+
+        do {
+            try setTorchEnabledOnActiveCamera(enabled)
+            cameraTorchIsEnabled = enabled
+            result(nil)
+        } catch {
+            cameraError(result, "The torch could not be changed: \(error.localizedDescription)")
+        }
+    }
+
+    func appendCameraFrame(_ frame: ARFrame) {
+        cameraFrameQueueLock.lock()
+        guard !cameraFrameIsQueued else {
+            cameraFrameQueueLock.unlock()
+            return
+        }
+        cameraFrameIsQueued = true
+        cameraFrameQueueLock.unlock()
+
+        cameraRecordingQueue.async { [weak self] in
+            guard let self else { return }
+            defer {
+                cameraFrameQueueLock.lock()
+                cameraFrameIsQueued = false
+                cameraFrameQueueLock.unlock()
+            }
+            guard let writer = cameraAssetWriter,
+                  let videoInput = cameraVideoInput,
+                  let adaptor = cameraPixelBufferAdaptor,
+                  let imageOrientation = cameraRecordingImageOrientation,
+                  let cropRect = cameraRecordingCropRect,
+                  let outputSize = cameraRecordingOutputSize,
+                  !cameraRecordingIsFinishing
+            else {
+                return
+            }
+            guard writer.status == .writing else {
+                failCameraVideoRecording(writer.error?.localizedDescription ?? "The video writer stopped unexpectedly.")
+                return
+            }
+            guard cameraRecordingLastTimestamp == nil || frame.timestamp > cameraRecordingLastTimestamp! else {
+                return
+            }
+            cameraRecordingLastTimestamp = frame.timestamp
+            guard videoInput.isReadyForMoreMediaData else {
+                return
+            }
+
+            let presentationTime = CMTime(seconds: frame.timestamp, preferredTimescale: 1_000_000_000)
+            if cameraRecordingStartTimestamp == nil {
+                writer.startSession(atSourceTime: presentationTime)
+                cameraRecordingStartTimestamp = frame.timestamp
+            }
+            guard let pixelBufferPool = adaptor.pixelBufferPool else {
+                failCameraVideoRecording("The video writer did not create a pixel buffer pool.")
+                return
+            }
+            var outputPixelBuffer: CVPixelBuffer?
+            let bufferStatus = CVPixelBufferPoolCreatePixelBuffer(
+                nil,
+                pixelBufferPool,
+                &outputPixelBuffer
+            )
+            guard bufferStatus == kCVReturnSuccess, let outputPixelBuffer else {
+                failCameraVideoRecording("A video output buffer could not be allocated.")
+                return
+            }
+
+            guard let outputImage = cameraPreviewImage(
+                from: frame.capturedImage,
+                orientation: imageOrientation,
+                cropRect: cropRect
+            ), outputImage.extent.size == outputSize else {
+                failCameraVideoRecording("The camera frame dimensions changed while recording.")
+                return
+            }
+            let outputBounds = CGRect(origin: .zero, size: outputSize)
+            cameraImageContext.render(
+                outputImage,
+                to: outputPixelBuffer,
+                bounds: outputBounds,
+                colorSpace: cameraColorSpace
+            )
+            if !adaptor.append(outputPixelBuffer, withPresentationTime: presentationTime) {
+                failCameraVideoRecording(writer.error?.localizedDescription ?? "A camera frame could not be written.")
+            }
+        }
+    }
+
+    func cancelCameraVideoRecording() {
+        cameraRecordingQueue.async { [weak self] in
+            guard let self else { return }
+            cameraAssetWriter?.cancelWriting()
+            resetCameraRecordingState(deleteOutput: true)
+            cameraRecordingFailureMessage = nil
+        }
+    }
+
+    func disableTorchForCleanup() {
+        cameraTorchIsEnabled = false
+        guard let device = torchCaptureDevice(),
+              device.hasTorch,
+              device.torchMode != .off,
+              device.isTorchModeSupported(.off)
+        else {
+            return
+        }
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            device.torchMode = .off
+        } catch {
+            logPluginError("failed to disable torch during cleanup: \(error.localizedDescription)", toChannel: channel)
+        }
+    }
+
+    private func cameraError(_ result: FlutterResult, _ message: String) {
+        result(FlutterError(code: "cameraError", message: message, details: nil))
+    }
+
+    private func currentCameraInterfaceOrientation() -> UIInterfaceOrientation {
+        if #available(iOS 13.0, *), let orientation = sceneView.window?.windowScene?.interfaceOrientation {
+            return orientation
+        }
+        return UIApplication.shared.statusBarOrientation
+    }
+
+    private func cameraImageOrientation(for orientation: UIInterfaceOrientation) -> CGImagePropertyOrientation {
+        switch orientation {
+        case .portrait:
+            return .right
+        case .portraitUpsideDown:
+            return .left
+        case .landscapeLeft:
+            return .down
+        case .landscapeRight:
+            return .up
+        default:
+            return .right
+        }
+    }
+
+    private func resetCameraRecordingState(deleteOutput: Bool) {
+        let outputURL = cameraRecordingURL
+        cameraAssetWriter = nil
+        cameraVideoInput = nil
+        cameraPixelBufferAdaptor = nil
+        cameraRecordingURL = nil
+        cameraRecordingStartTimestamp = nil
+        cameraRecordingLastTimestamp = nil
+        cameraRecordingImageOrientation = nil
+        cameraRecordingCropRect = nil
+        cameraRecordingOutputSize = nil
+        cameraRecordingIsFinishing = false
+        if deleteOutput, let outputURL {
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+    }
+
+    private func failCameraVideoRecording(_ message: String) {
+        cameraAssetWriter?.cancelWriting()
+        resetCameraRecordingState(deleteOutput: true)
+        cameraRecordingFailureMessage = message
+    }
+
+    private func cameraImageCropRect(
+        for frame: ARFrame,
+        orientation: UIInterfaceOrientation,
+        viewportSize: CGSize,
+        requiresEvenDimensions: Bool
+    ) -> CGRect? {
+        let imageExtent = CIImage(cvPixelBuffer: frame.capturedImage).extent
+        guard imageExtent.width > 0,
+              imageExtent.height > 0,
+              viewportSize.width > 0,
+              viewportSize.height > 0
+        else {
+            return nil
+        }
+
+        let imageToView = frame.displayTransform(
+            for: orientation,
+            viewportSize: viewportSize
+        )
+        let viewToImage = imageToView.inverted()
+        let viewCorners = [
+            CGPoint(x: 0, y: 0),
+            CGPoint(x: 1, y: 0),
+            CGPoint(x: 0, y: 1),
+            CGPoint(x: 1, y: 1),
+        ]
+        let imageCorners = viewCorners.map { $0.applying(viewToImage) }
+        let minimumX = max(0, imageCorners.map(\.x).min() ?? 0)
+        let maximumX = min(1, imageCorners.map(\.x).max() ?? 1)
+        let minimumY = max(0, imageCorners.map(\.y).min() ?? 0)
+        let maximumY = min(1, imageCorners.map(\.y).max() ?? 1)
+        guard maximumX > minimumX, maximumY > minimumY else {
+            return nil
+        }
+
+        var cropWidth = (maximumX - minimumX) * imageExtent.width
+        var cropHeight = (maximumY - minimumY) * imageExtent.height
+
+        if requiresEvenDimensions {
+            cropWidth = floor(cropWidth / 2) * 2
+            cropHeight = floor(cropHeight / 2) * 2
+        }
+        guard cropWidth >= 2, cropHeight >= 2 else {
+            return nil
+        }
+
+        let centerX = imageExtent.minX + ((minimumX + maximumX) / 2) * imageExtent.width
+        let centerYFromTop = ((minimumY + maximumY) / 2) * imageExtent.height
+        let centerY = imageExtent.maxY - centerYFromTop
+        return CGRect(
+            x: centerX - cropWidth / 2,
+            y: centerY - cropHeight / 2,
+            width: cropWidth,
+            height: cropHeight
+        )
+    }
+
+    private func cameraPreviewImage(
+        from pixelBuffer: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation,
+        cropRect: CGRect
+    ) -> CIImage? {
+        let cameraImage = CIImage(cvPixelBuffer: pixelBuffer)
+        guard cameraImage.extent.contains(cropRect) else {
+            return nil
+        }
+        let previewImage = cameraImage.cropped(to: cropRect).oriented(orientation)
+        return previewImage.transformed(
+            by: CGAffineTransform(
+                translationX: -previewImage.extent.minX,
+                y: -previewImage.extent.minY
+            )
+        )
+    }
+
+    private func setTorchEnabledOnActiveCamera(_ enabled: Bool) throws {
+        guard let device = torchCaptureDevice(), device.hasTorch else {
+            throw NSError(
+                domain: "arkit.camera",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "The active ARKit camera does not expose a torch."]
+            )
+        }
+        let mode: AVCaptureDevice.TorchMode = enabled ? .on : .off
+        guard device.isTorchModeSupported(mode) else {
+            throw NSError(
+                domain: "arkit.camera",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "The requested torch mode is not supported."]
+            )
+        }
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        device.torchMode = mode
+    }
+
+    /// The capture device whose torch can be driven while an AR session owns the camera.
+    /// `configurableCaptureDeviceForPrimaryCamera` is only available on iOS 16+ and is nil
+    /// for configurations ARKit does not allow configuring, so fall back to the built-in
+    /// wide angle back camera, which is the device ARKit runs the session on.
+    private func torchCaptureDevice() -> AVCaptureDevice? {
+        if #available(iOS 16.0, *),
+           let configuration,
+           let configurable = type(of: configuration).configurableCaptureDeviceForPrimaryCamera,
+           configurable.hasTorch {
+            return configurable
+        }
+        if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+           device.hasTorch {
+            return device
+        }
+        let device = AVCaptureDevice.default(for: .video)
+        return device?.hasTorch == true ? device : nil
     }
 }

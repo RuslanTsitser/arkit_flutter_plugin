@@ -81,6 +81,46 @@ Result:
 
 ![flutter](./demo.gif)
 
+### Image-tracking camera controls
+
+An image-tracking session can control the torch, take a photo, and record video
+through its `ARKitController`:
+
+```dart
+late ARKitController arkitController;
+
+ARKitSceneView(
+  configuration: ARKitConfiguration.imageTracking,
+  trackingImages: trackingImages,
+  onARKitViewCreated: (controller) async {
+    arkitController = controller;
+
+    if (await controller.isTorchAvailable()) {
+      await controller.setTorchEnabled(true);
+    }
+  },
+);
+
+final photoPath = await arkitController.takePicture();
+
+await arkitController.startVideoRecording();
+final videoPath = await arkitController.stopVideoRecording();
+// Use cancelVideoRecording() to discard an active recording instead.
+```
+
+Torch control requires iOS 16 or newer and returns unavailable when ARKit does
+not expose a compatible capture device. These controls support
+`ARKitConfiguration.imageTracking` only.
+
+Photos contain the camera preview visible at capture time. Videos use the
+preview viewport and orientation present when recording starts. Both outputs
+apply ARKit's display transform and aspect-fill crop, without SceneKit nodes or
+Flutter widgets. Video does not contain audio. The returned JPEG and H.264 MP4
+paths point to temporary files owned by the caller. Move or delete them after
+use. The viewport and orientation are fixed for the duration of a recording.
+Session interruption or controller disposal cancels the recording and deletes
+its incomplete file.
+
 ## Examples
 
 I would highly recommend to review the [sample](https://github.com/olexale/arkit_flutter_plugin/blob/master/example/lib/main.dart) from the `Example` folder inside the plugin. Some samples rely on [this Earth image](https://upload.wikimedia.org/wikipedia/commons/9/97/The_Earth_seen_from_Apollo_17.jpg)
