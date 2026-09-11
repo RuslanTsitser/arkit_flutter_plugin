@@ -83,8 +83,8 @@ Result:
 
 ### Image-tracking camera controls
 
-An image-tracking session can select a rear physical camera lens, control the
-torch, take a photo, and record video through its `ARKitController`:
+An image-tracking session can control the torch, take a photo, and record video
+through its `ARKitController`:
 
 ```dart
 late ARKitController arkitController;
@@ -94,11 +94,6 @@ ARKitSceneView(
   trackingImages: trackingImages,
   onARKitViewCreated: (controller) async {
     arkitController = controller;
-
-    final lenses = await controller.getAvailableCameraLenses();
-    if (lenses.contains(ARKitCameraLensType.ultraWide)) {
-      await controller.setCameraLens(ARKitCameraLensType.ultraWide);
-    }
 
     if (await controller.isTorchAvailable()) {
       await controller.setTorchEnabled(true);
@@ -113,11 +108,9 @@ final videoPath = await arkitController.stopVideoRecording();
 // Use cancelVideoRecording() to discard an active recording instead.
 ```
 
-Lens discovery and selection require iOS 14.5 or newer. Torch control requires
-iOS 16 or newer and returns unavailable when ARKit does not expose a compatible
-capture device. These controls support `ARKitConfiguration.imageTracking` only;
-the lens API selects among the rear ultra-wide, wide, and telephoto cameras and
-does not switch between front and rear cameras.
+Torch control requires iOS 16 or newer and returns unavailable when ARKit does
+not expose a compatible capture device. These controls support
+`ARKitConfiguration.imageTracking` only.
 
 Photos contain the camera preview visible at capture time. Videos use the
 preview viewport and orientation present when recording starts. Both outputs

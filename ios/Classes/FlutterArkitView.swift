@@ -49,9 +49,6 @@ class FlutterArkitView: NSObject, FlutterPlatformView {
         if configuration == nil && call.method != "init" {
             logPluginError("plugin is not initialized properly", toChannel: channel)
             let cameraMethods = [
-                "getAvailableCameraLenses",
-                "getCurrentCameraLens",
-                "setCameraLens",
                 "takePicture",
                 "startVideoRecording",
                 "stopVideoRecording",
@@ -148,12 +145,6 @@ class FlutterArkitView: NSObject, FlutterPlatformView {
             onGetSnapshotWithDepthData(result)
         case "cameraPosition":
             onGetCameraPosition(result)
-        case "getAvailableCameraLenses":
-            onGetAvailableCameraLenses(result)
-        case "getCurrentCameraLens":
-            onGetCurrentCameraLens(result)
-        case "setCameraLens":
-            onSetCameraLens(arguments, result)
         case "takePicture":
             onTakePicture(result)
         case "startVideoRecording":

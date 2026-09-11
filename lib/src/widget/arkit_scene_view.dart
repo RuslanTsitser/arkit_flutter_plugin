@@ -41,9 +41,6 @@ typedef ARKitRotationResultHandler = void Function(
 typedef ARKitPinchGestureHandler = void Function(
     List<ARKitNodePinchResult> pinch);
 
-/// A rear camera lens that ARKit can use for image tracking.
-enum ARKitCameraLensType { ultraWide, wide, telephoto }
-
 /// A widget that wraps ARSCNView from ARKit.
 class ARKitSceneView extends StatefulWidget {
   const ARKitSceneView({
@@ -915,37 +912,6 @@ class ARKitController {
   Future<ImageProvider> getCapturedImage() async {
     final result = await _channel.invokeMethod<Uint8List>('capturedImage');
     return MemoryImage(result!);
-  }
-
-  /// Returns the rear camera lenses available to the active image-tracking
-  /// configuration.
-  ///
-  /// Returns an empty list when lens selection is unsupported. In particular,
-  /// identifying physical lens types requires iOS 14.5 or newer.
-  Future<List<ARKitCameraLensType>> getAvailableCameraLenses() async {
-    _ensureCameraIsAvailable();
-    final result = await _channel.invokeListMethod<String>(
-      'getAvailableCameraLenses',
-    );
-    return (result ?? const <String>[])
-        .map(ARKitCameraLensType.values.byName)
-        .toList(growable: false);
-  }
-
-  /// Returns the active rear camera lens, or `null` when it cannot be
-  /// identified for the active configuration.
-  Future<ARKitCameraLensType?> getCurrentCameraLens() async {
-    _ensureCameraIsAvailable();
-    final result = await _channel.invokeMethod<String>('getCurrentCameraLens');
-    return result == null ? null : ARKitCameraLensType.values.byName(result);
-  }
-
-  /// Switches the active image-tracking session to [lens].
-  ///
-  /// Switching lenses while video recording is active is not supported.
-  Future<void> setCameraLens(ARKitCameraLensType lens) {
-    _ensureCameraIsAvailable();
-    return _channel.invokeMethod<void>('setCameraLens', {'lens': lens.name});
   }
 
   /// Captures the visible, aspect-filled camera preview without SceneKit or
